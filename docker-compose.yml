@@ -6,15 +6,15 @@ networks:
 
 services:
   api:
-    container_name: codechat_api
+    container_name: convites_leticia_api
     image: codechat/api:develop
     restart: unless-stopped
     ports:
-      - 8084:8084
+      - 8801:8801
     volumes:
       - instances_connecteds:/codechat/instances
     environment:
-      - SERVER_PORT=8084
+      - SERVER_PORT=8801
       - SESSION_SECRET=W0NvZGVDaGF0XTpbU2Vzc
 
       - LOG_LEVEL=ERROR|WARN|INFO|DEBUG|LOG|VERBOSE|DARK

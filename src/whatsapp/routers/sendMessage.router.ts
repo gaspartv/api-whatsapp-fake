@@ -34,7 +34,13 @@
  * └──────────────────────────────────────────────────────────────────────────────┘
  */
 
+import { PrismaClient } from '@prisma/client';
+import { isEmpty } from 'class-validator';
 import { NextFunction, Request, RequestHandler, Response, Router } from 'express';
+import multer from 'multer';
+import { HttpStatus } from '../../app.module';
+import { BadRequestException } from '../../exceptions';
+import { dataValidate, routerPath } from '../../validate/router.validate';
 import {
   audioFileMessageSchema,
   audioMessageSchema,
@@ -47,9 +53,9 @@ import {
   reactionMessageSchema,
   textMessageSchema,
 } from '../../validate/validate.schema';
+import { SendMessageController } from '../controllers/sendMessage.controller';
 import {
   AudioMessageFileDto,
-  Button,
   MediaFileDto,
   SendAudioDto,
   SendButtonsDto,
@@ -58,14 +64,8 @@ import {
   SendLocationDto,
   SendMediaDto,
   SendReactionDto,
-  SendTextDto,
+  SendTextDto
 } from '../dto/sendMessage.dto';
-import multer from 'multer';
-import { BadRequestException } from '../../exceptions';
-import { isEmpty } from 'class-validator';
-import { HttpStatus } from '../../app.module';
-import { SendMessageController } from '../controllers/sendMessage.controller';
-import { routerPath, dataValidate } from '../../validate/router.validate';
 
 function validateMedia(req: Request, _: Response, next: NextFunction) {
   if (!req?.file || req.file.fieldname !== 'attachment') {
@@ -207,7 +207,175 @@ export function MessageRouter(
       });
 
       return res.status(HttpStatus.CREATED).json(response);
+    })
+    .post(routerPath('registrarConvidados'), ...guards, async (req, res) => {
+      const body = req.body;
+
+      const prisma = new PrismaClient();
+
+      for await (const convidado of body) {
+        const convidadoExist = await prisma.convidados.findFirst({
+          where: {
+            phone: convidado.phone,
+          },
+        });
+        if (!convidadoExist) {
+          await prisma.convidados.create({
+            data: {
+              nome: convidado.nome,
+              phone: convidado.phone,
+              presente: convidado.presente,
+            },
+          });
+        }
+      }
+
+      const convidados = await prisma.convidados.findMany();
+
+      return res.status(HttpStatus.CREATED).json(convidados);
+    })
+    .get(routerPath('confirmados'), ...guards, async (req, res) => {
+      const prisma = new PrismaClient();
+
+      const convidados = await prisma.convidados.findMany();
+
+      return res.status(HttpStatus.CREATED).json({
+        totalConvites: convidados.length,
+        totalConfirmados: convidados.filter((convidado) => convidado.confirmed).length,
+        confirmados: convidados.filter((convidado) => convidado.confirmed),
+      });
+    })
+    .get(routerPath('sendConvite'), ...guards, async (req, res) => {
+      const myHeaders = new Headers();
+      myHeaders.append('Content-Type', 'application/json');
+      myHeaders.append('apikey', 'zYzP7ocstxh3Sscefew4FZTCu4ehnM8v4hu');
+
+      const prisma = new PrismaClient();
+
+      const convidados = await prisma.convidados.findMany({
+        where: {
+          confirmed: false,
+        },
+      });
+
+      const sendConvite = async (convidado) => {
+        // const raw = JSON.stringify({
+        //   number: convidado.phone,
+        //   options: {
+        //     delay: 1200,
+        //     presence: 'composing',
+        //   },
+        //   buttonsMessage: {
+        //     thumbnailUrl: 'https://i.imgur.com/IDJTzgy.jpeg',
+        //     title: 'Convite especial',
+        //     description: `Olá ${convidado.nome}, com as bençãos de Deus e de nossos pais e familiares, te convidamos para celebrar o amor\n\n*Rafael e Letícia*\n\n20 de setembro as 19h30\n\n*Local:* Espaço lounge festas\nRua Miguel Rangel 160, Cascadura - RJ`,
+        //     buttons: [
+        //       {
+        //         type: 'reply',
+        //         displayText: 'Endereço/horário',
+        //         id: 'localizacao',
+        //       },
+        //       {
+        //         type: 'reply',
+        //         displayText: 'Confirmar presença',
+        //         id: 'confirmar_presenca',
+        //       },
+        //       {
+        //         type: 'reply',
+        //         displayText: 'Falar com noivos',
+        //         id: 'falar_com',
+        //       },
+        //       {
+        //         type: "url",
+        //         displayText: "Lista de presentes",
+        //         url: "https://noivos.casar.com/leticia-e-rafael-2024-09-20#/presentes"
+        //       },
+        //     ],
+        //   },
+        // });
+
+        // const res = await fetch(`${process.env.BASE_URL}/message/sendButtons/baby`, {
+        //   method: 'POST',
+        //   headers: myHeaders,
+        //   body: raw,
+        //   redirect: 'follow',
+        // })
+        //   .then((response) => response.json())
+        //   // .then((result) => console.log(result))
+        //   .catch((error) => console.error(error));
+
+        // console.log("RES", res.content.message)
+
+        // if (res.device === "ios") {
+          
+          const rawImage = JSON.stringify({
+            number: convidado.phone,
+            options: {
+              delay: 200,
+              presence: 'composing',
+              quotedMessageId: 1
+            },
+            mediaMessage: {
+              mediatype: "image",
+              media: "https://i.imgur.com/IDJTzgy.jpeg"
+            }
+          });
+
+          await fetch(`${process.env.BASE_URL}/message/sendMedia/baby`, {
+            method: 'POST',
+            headers: myHeaders,
+            body: rawImage,
+            redirect: 'follow',
+          })
+            .then((response) => response.json())
+            // .then((result) => console.log(result))
+            .catch((error) => console.error(error));
+
+          const raw = JSON.stringify({
+            number: convidado.phone,
+            options: {
+              delay: 2000,
+              presence: 'composing',
+            },
+            textMessage: {
+              text: `
+*Convite especial*
+
+Olá ${convidado.nome}, com as bençãos de Deus e de nossos pais e familiares, te convidamos para celebrar o amor!
+
+*Rafael e Letícia*
+
+_Digite o número para a opção:_
+
+*1* - Endereço/horário
+*2* - Confirmar presença
+*3* - Falar com noivos
+*4* - Lista de presentes`
+            }
+          });
+
+        await fetch(`${process.env.BASE_URL}/message/sendText/baby`, {
+          method: 'POST',
+          headers: myHeaders,
+          body: raw,
+          redirect: 'follow',
+        })
+          .then((response) => response.json())
+          // .then((result) => console.log(result))
+          .catch((error) => console.error(error));
+
+        // }
+      };
+
+      for (const [index, convidado] of convidados.entries()) {
+        setTimeout(() => {
+          sendConvite(convidado);
+        }, index * 60000);
+      }
+
+      return res.status(HttpStatus.CREATED).json({ message: 'Convites sendo enviados' });
     });
 
   return router;
 }
+

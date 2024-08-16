@@ -2,14 +2,16 @@ version: '3.8'
 
 services:
   postgres_server:
-    image: postgres:latest
-    container_name: postgres_server
+    image: bitnami/postgresql
+    container_name: convites_leticia
     environment:
-      POSTGRES_PASSWORD: pass
+      - POSTGRESQL_USERNAME=docker
+      - POSTGRESQL_PASSWORD=docker
+      - POSTGRESQL_DATABASE=convites_leticia
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - '5501:5432'
     networks:
       - public_network
 

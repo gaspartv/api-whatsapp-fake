@@ -8,6 +8,7 @@
     "start": "ts-node --files --transpile-only ./src/main.ts",
     "start:prod": "bash start.sh",
     "start:dev": "clear && tsnd --files --transpile-only --respawn --ignore-watch node_modules ./src/main.ts",
+    "start:pm2": "pm2 start ecosystem.config.json",
     "test": "clear && tsnd --files --transpile-only --respawn --ignore-watch node_modules ./test/all.test.ts"
   },
   "repository": {

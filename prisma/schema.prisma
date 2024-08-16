@@ -202,3 +202,15 @@ model ActivityLogs {
   Instance    Instance? @relation(fields: [instanceId], references: [id], onDelete: Cascade)
   instanceId  Int?      @db.Integer
 }
+
+model Convidados {
+  id            Int       @id @default(autoincrement())
+  createdAt     DateTime? @default(now()) @db.Date
+  updatedAt     DateTime? @updatedAt @db.Date
+  nome          String    @db.VarChar(100)
+  phone         String
+  confirmed     Boolean?
+  refused       Boolean?
+  presente      String?   @default("M")
+  acompanhantes String[]
+}

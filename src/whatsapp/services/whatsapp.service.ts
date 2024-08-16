@@ -37,6 +37,8 @@
  * └──────────────────────────────────────────────────────────────────────────────┘
  */
 
+import { Boom } from '@hapi/boom';
+import PrismType, { Instance, PrismaClient, Webhook } from '@prisma/client';
 import makeWASocket, {
   BufferedEventData,
   CacheStore,
@@ -67,25 +69,56 @@ import makeWASocket, {
   WAMessageUpdate,
   WASocket,
 } from '@whiskeysockets/baileys/';
+import axios, { AxiosError } from 'axios';
+import { isArray, isBase64, isNotEmpty, isURL } from 'class-validator';
+import EventEmitter2 from 'eventemitter2';
+import { readFileSync } from 'fs';
+import Long from 'long';
+import mime from 'mime-types';
+import NodeCache from 'node-cache';
+import { release } from 'os';
+import { join } from 'path';
+import P from 'pino';
+import qrcode, { QRCodeToDataURLOptions } from 'qrcode';
+import qrcodeTerminal from 'qrcode-terminal';
+import { ulid } from 'ulid';
 import {
   ConfigService,
   ConfigSessionPhone,
   Database,
   GlobalWebhook,
-  QrCode,
   ProviderSession,
+  QrCode,
 } from '../../config/env.config';
 import { Logger } from '../../config/logger.config';
 import { INSTANCE_DIR, ROOT_DIR } from '../../config/path.config';
-import { readFileSync } from 'fs';
-import { join } from 'path';
-import axios, { AxiosError } from 'axios';
-import qrcode, { QRCodeToDataURLOptions } from 'qrcode';
-import qrcodeTerminal from 'qrcode-terminal';
-import { Boom } from '@hapi/boom';
-import EventEmitter2 from 'eventemitter2';
-import { release } from 'os';
-import P from 'pino';
+import { BadRequestException, InternalServerErrorException } from '../../exceptions';
+import * as s3Service from '../../integrations/minio/minio.utils';
+import { TypebotSessionService } from '../../integrations/typebot/typebot.service';
+import { ProviderFiles } from '../../provider/sessions';
+import { Query, Repository } from '../../repository/repository.service';
+import {
+  AuthState,
+  AuthStateProvider,
+} from '../../utils/use-multi-file-auth-state-provider-files';
+import { isValidUlid } from '../../validate/ulid';
+import { Websocket } from '../../websocket/server';
+import {
+  ArchiveChatDto,
+  DeleteMessage,
+  OnWhatsAppDto,
+  ReadMessageDto,
+  ReadMessageIdDto,
+  RejectCallDto,
+  UpdatePresenceDto,
+  WhatsAppNumberDto,
+} from '../dto/chat.dto';
+import {
+  CreateGroupDto,
+  GroupJid,
+  GroupPictureDto,
+  GroupUpdateParticipantDto,
+} from '../dto/group.dto';
 import {
   AudioMessageFileDto,
   ContactMessage,
@@ -101,41 +134,7 @@ import {
   SendReactionDto,
   SendTextDto,
 } from '../dto/sendMessage.dto';
-import { isArray, isBase64, isNotEmpty, isURL } from 'class-validator';
-import {
-  ArchiveChatDto,
-  DeleteMessage,
-  OnWhatsAppDto,
-  ReadMessageDto,
-  ReadMessageIdDto,
-  RejectCallDto,
-  UpdatePresenceDto,
-  WhatsAppNumberDto,
-} from '../dto/chat.dto';
-import { BadRequestException, InternalServerErrorException } from '../../exceptions';
-import {
-  CreateGroupDto,
-  GroupJid,
-  GroupPictureDto,
-  GroupUpdateParticipantDto,
-} from '../dto/group.dto';
-import Long from 'long';
-import NodeCache, { Data } from 'node-cache';
-import {
-  AuthState,
-  AuthStateProvider,
-} from '../../utils/use-multi-file-auth-state-provider-files';
-import mime from 'mime-types';
-import { Instance, Webhook } from '@prisma/client';
 import { WebhookEvents, WebhookEventsEnum, WebhookEventsType } from '../dto/webhook.dto';
-import { Query, Repository } from '../../repository/repository.service';
-import PrismType from '@prisma/client';
-import * as s3Service from '../../integrations/minio/minio.utils';
-import { TypebotSessionService } from '../../integrations/typebot/typebot.service';
-import { ProviderFiles } from '../../provider/sessions';
-import { Websocket } from '../../websocket/server';
-import { ulid } from 'ulid';
-import { isValidUlid } from '../../validate/ulid';
 
 type InstanceQrCode = {
   count: number;
@@ -836,6 +835,314 @@ export class WAStartupService {
         this.ws.send(this.instance.name, 'messages.upsert', messageRaw);
 
         await this.sendDataWebhook('messagesUpsert', messageRaw);
+
+        /// REMOVER DAQUI PARA BAIXO ///
+
+        const phone: any =
+          messageRaw.keyRemoteJid.split('@')[0] ||
+          messageRaw.keyParticipant.split('@')[0];
+
+        const prisma = new PrismaClient();
+
+        const baseUrl = 'http://localhost:8801';
+        const myHeaders = new Headers();
+        myHeaders.append('Content-Type', 'application/json');
+        myHeaders.append('apikey', 'zYzP7ocstxh3Sscefew4FZTCu4ehnM8v4hu');
+
+        function getTextContent(msg: any): string | undefined {
+          if (
+            typeof msg.content === 'object' &&
+            msg.content !== null &&
+            'text' in msg.content
+          ) {
+            return (msg.content as { text: string }).text;
+          }
+          if (
+            typeof msg.content === 'object' &&
+            msg.content !== null &&
+            'selectedDisplayText' in msg.content
+          ) {
+            return (msg.content as { selectedDisplayText: string }).selectedDisplayText;
+          }
+          return undefined;
+        }
+
+        const textContent = getTextContent(messageRaw);
+
+        if (textContent?.toLowerCase() === 'lista de convidados') {
+          const convidados = await prisma.convidados.findMany();
+          const raw = JSON.stringify({
+            number: phone,
+            options: {
+              delay: 2000,
+              presence: 'composing',
+            },
+            textMessage: {
+              text: `Lista de convidados:\n\n${convidados
+                .map((c) => `${c.confirmed === true ? '✅ ' : c.confirmed === false ? '❌ ' : '⏳ '} ${c.nome} - ${c.phone}\n`)
+                .join('')}`,
+            },
+          });
+
+          fetch(`${baseUrl}/message/sendText/baby`, {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw,
+            redirect: 'follow',
+          })
+            .then((response) => response.text())
+            .then((result) => console.log(result))
+            .catch((error) => console.error(error));
+        }
+
+        function getIdContent(msg: any): string | undefined {
+          if (
+            typeof msg.content === 'object' &&
+            msg.content !== null &&
+            'text' in msg.content
+          ) {
+            return (msg.content as { text: string }).text;
+          }
+          if (
+            typeof msg.content === 'object' &&
+            msg.content !== null &&
+            'selectedId' in msg.content
+          ) {
+            return (msg.content as { selectedId: string }).selectedId;
+          }
+          return undefined;
+        }
+
+        const conv = await prisma.convidados.findFirst({
+          where: { phone: { contains: phone.slice(-8) } },
+        });
+
+        const idContent = getIdContent(messageRaw).toLowerCase()
+
+        if (idContent === "4") {
+          const raw2 = JSON.stringify({
+            number: phone,
+            textMessage: {
+              text: 'Acesse: https://noivos.casar.com/leticia-e-rafael-2024-09-20#/presentes',
+            },
+          });
+
+          fetch(`${baseUrl}/message/sendText/baby`, {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw2,
+            redirect: 'follow',
+          })
+            .then((response) => response.text())
+            .then((result) => console.log(result))
+            .catch((error) => console.error(error));
+
+        }
+
+        if (idContent === 'falar_com' || idContent === '3') {
+          const raw2 = JSON.stringify({
+            number: phone,
+            textMessage: {
+              text: 'Segue o contato do Rafael e da Letícia!',
+            },
+          });
+
+          fetch(`${baseUrl}/message/sendText/baby`, {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw2,
+            redirect: 'follow',
+          })
+            .then((response) => response.text())
+            .then((result) => console.log(result))
+            .catch((error) => console.error(error));
+
+          const raw = JSON.stringify({
+            number: phone,
+            options: {
+              delay: 2500,
+              presence: 'composing',
+            },
+            contactMessage: [
+              {
+                fullName: 'Rafael',
+                wuid: '5521974695587',
+                phoneNumber: '+55 21 9 7469-5587',
+              },
+              {
+                fullName: 'Letícia',
+                wuid: '5521993029036',
+                phoneNumber: '+55 21 9 9302-9036',
+              },
+            ],
+          });
+
+          fetch(`${baseUrl}/message/sendContact/baby`, {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw,
+            redirect: 'follow',
+          })
+            .then((response) => response.text())
+            .then((result) => console.log(result))
+            .catch((error) => console.error(error));
+        }
+
+        if (idContent === 'localizacao' || idContent === '1') {
+          const raw = JSON.stringify({
+            number: phone,
+            locationMessage: {
+              address: 'Rua Miguel Rangel 160, Cascadura - RJ',
+              latitude: -22.8800765,
+              longitude: -43.3315599,
+            },
+          });
+
+          fetch(`${baseUrl}/message/sendLocation/baby`, {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw,
+            redirect: 'follow',
+          })
+            .then((response) => response.text())
+            .then((result) => console.log(result))
+            .catch((error) => console.error(error));
+
+          const raw5 = JSON.stringify({
+            number: phone,
+            textMessage: {
+              text: `*Rua Miguel Rangel 160, Cascadura - RJ\n\nAcima está a localização do evento!`,
+            },
+          });
+
+          await fetch('http://localhost:8801/message/sendText/baby', {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw5,
+            redirect: 'follow',
+          })
+            .then((response) => response.text())
+            .then((result) => console.log(result))
+            .catch((error) => console.error(error));
+        }
+
+        if (idContent === "convidado_extra") {
+          const raw = JSON.stringify({
+            number: phone,
+            textMessage: {
+              text: `Escreva o nome do seu/sua acompanhante`,
+            },
+          });
+
+          await fetch('http://localhost:8801/message/sendText/baby', {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw,
+            redirect: 'follow',
+          })
+            .then((response) => response.text())
+            .then((result) => console.log(result))
+            .catch((error) => console.error(error));
+
+        }
+
+        if (typeof conv.confirmed !== 'boolean') {
+        if (idContent === "sim"|| idContent === "s") {
+          const raw5 = JSON.stringify({
+            number: phone,
+            textMessage: {
+              text: `Vai ser um prazer ter você conosco!
+Estamos te esperando 🥰`,
+            },
+          });
+
+          const convidado = await prisma.convidados.findFirst({
+            where: { phone: { contains: phone.slice(-8) } },
+          });
+
+          if (!convidado) return;
+
+          await prisma.convidados.update({
+            where: { id: convidado.id },
+            data: { confirmed: true },
+          });
+
+          await fetch('http://localhost:8801/message/sendText/baby', {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw5,
+            redirect: 'follow',
+          })
+            .then((response) => response.text())
+            .then((result) => console.log(result))
+            .catch((error) => console.error(error));
+        }
+
+        if (idContent === "não" || idContent === 'nao'|| idContent === "n") {
+          const raw5 = JSON.stringify({
+            number: phone,
+            textMessage: {
+              text: `Poxa! Uma pena 😕`,
+            },
+          });
+
+          await fetch('http://localhost:8801/message/sendText/baby', {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw5,
+            redirect: 'follow',
+          })
+            .then((response) => response.text())
+            .then((result) => console.log(result))
+            .catch((error) => console.error(error));
+        }
+
+        if (idContent === 'confirmar_presenca' || idContent === '2') {
+          const raw5 = JSON.stringify({
+            number: phone,
+            textMessage: {
+              text: `_Que legal!_ 🥰
+
+Agora confirme sua presença digitando:
+*sim* ou *não*
+              `,
+            },
+          });
+
+          await fetch('http://localhost:8801/message/sendText/baby', {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw5,
+            redirect: 'follow',
+          })
+            .then((response) => response.text())
+            .then((result) => console.log(result))
+            .catch((error) => console.error(error));
+        }
+
+          return
+        }
+
+        if (idContent === 'informacoes_extras') {
+          const raw5 = JSON.stringify({
+            number: phone,
+            textMessage: {
+              text: `!`,
+            },
+          });
+
+          await fetch('http://localhost:8801/message/sendText/baby', {
+            method: 'POST',
+            headers: myHeaders,
+            body: raw5,
+            redirect: 'follow',
+          })
+            .then((response) => response.text())
+            .then((result) => console.log(result))
+            .catch((error) => console.error(error));
+        }
+
+        // REMOVER DAQUI PARA CIMA //
 
         if (s3Service.BUCKET?.ENABLE) {
           try {
@@ -2206,3 +2513,4 @@ export class WAStartupService {
     }
   }
 }
+

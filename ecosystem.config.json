@@ -1,0 +1,10 @@
+{
+    "apps": [
+      {
+        "name": "leticia-convite-casamento",
+        "script": "dist/src/main.js",
+        "interpreter": "node",
+        "watch": false
+      }
+    ]
+  }
